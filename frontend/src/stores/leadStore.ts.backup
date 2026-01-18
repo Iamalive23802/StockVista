@@ -1,0 +1,136 @@
+import { create } from 'zustand';
+import axiosInstance from '../utils/axiosConfig';
+import { useToastStore } from './toastStore';
+import { useAuthStore } from './authStore';
+
+export interface Lead {
+  id: string;
+  date?: string; 
+  fullName: string;
+  phone: string;
+  email: string;
+  altNumber: string;
+  notes: string;
+  deematAccountName: string;
+  profession: string;
+  stateName: string;
+  capital: string;
+  segment: string;
+  wonOn?: string;
+  gender?: string;
+  dob?: string;
+  age?: string;
+  panCardNumber?: string;
+  aadharCardNumber?: string;
+  paymentHistory?: string;
+  status: 'Busy' | 'Call Back With Presentation' | 'Call Back Without Presentation' | 'Call Disconnected' | 'Counselling Call' | 'Disconnected Call' | 'Do Not disturb' | 'Equity trader' | 'Follow Up' | 'Follow Up-No Response' | 'Free Trial' | 'Free Trial – Follow Up' | 'Incoming Calls Not Allowed' | 'Invalid Number' | 'Language Barrier' | 'Less Funds' | 'Loss Client' | 'Low Capital' | 'No Capital' | 'No DMAT' | 'No Response' | 'Non Trader' | 'Not Connected' | 'Not Interested' | 'Not Reachable' | 'Out Of Service' | 'Paid Client' | 'Promise To Pay' | 'Ringing' | 'Summarization Call' | 'Switched Off' | 'Wrong No';
+  team_id: string;
+  assigned_to?: string;
+  assigned_user_name?: string;
+  assigned_user_role?: string;
+  assignedAt?: string;
+  tags?: string;
+  source?: string;
+}
+
+interface LeadStore {
+  leads: Lead[];
+  loading: boolean;
+  fetchLeads: () => Promise<void>;
+  addLead: (lead: Omit<Lead, 'id'>) => Promise<void>;
+  updateLead: (id: string, lead: Omit<Lead, 'id'>) => Promise<void>;
+  deleteLead: (id: string) => Promise<void>;
+  uploadLeads: (file: File) => Promise<void>;
+}
+
+export const useLeadStore = create<LeadStore>((set) => ({
+  leads: [],
+  loading: false,
+
+  fetchLeads: async () => {
+    set({ loading: true });
+    try {
+      const { data } = await axiosInstance.get('/leads');
+      const mapped = data.map((lead: any) => ({
+        ...lead,
+        fullName: lead.full_name,
+        altNumber: lead.alt_number,
+        deematAccountName: lead.deemat_account_name,
+        profession: lead.profession,
+        stateName: lead.state_name,
+        capital: lead.capital,
+        segment: lead.segment,
+        wonOn: lead.won_on,
+        gender: lead.gender,
+        dob: lead.dob,
+        age: lead.age,
+        panCardNumber: lead.pan_card_number,
+        aadharCardNumber: lead.aadhar_card_number,
+        paymentHistory: lead.payment_history,
+        assigned_user_name: lead.assigned_user_name,
+        assigned_user_role: lead.assigned_user_role,
+        assignedAt: lead.assigned_at,
+        tags: lead.tags || '',
+        source: lead.source || '',
+      }));
+      set({ leads: mapped });
+    } catch (err) {
+      console.error('Failed to fetch leads:', err);
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  addLead: async (lead) => {
+    const addToast = useToastStore.getState().addToast;
+    try {
+      await axiosInstance.post('/leads', lead);
+      await useLeadStore.getState().fetchLeads();
+      addToast('Lead added successfully', 'success');
+    } catch (err) {
+      console.error('Failed to add lead:', err);
+      addToast('Failed to add lead', 'error');
+    }
+  },
+
+  updateLead: async (id, lead) => {
+    const addToast = useToastStore.getState().addToast;
+    try {
+      await axiosInstance.put(`/leads/${id}`, lead);
+      await useLeadStore.getState().fetchLeads();
+      addToast('Lead updated successfully', 'success');
+    } catch (err) {
+      console.error('Failed to update lead:', err);
+      addToast('Failed to update lead', 'error');
+    }
+  },
+
+  deleteLead: async (id) => {
+    const addToast = useToastStore.getState().addToast;
+    try {
+      await axiosInstance.delete(`/leads/${id}`);
+      await useLeadStore.getState().fetchLeads();
+      addToast('Lead deleted successfully', 'success');
+    } catch (err) {
+      console.error('Failed to delete lead:', err);
+      addToast('Failed to delete lead', 'error');
+    }
+  },
+
+  uploadLeads: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const addToast = useToastStore.getState().addToast;
+    try {
+      await axiosInstance.post('/leads/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      await useLeadStore.getState().fetchLeads();
+      addToast('Leads uploaded successfully', 'success');
+    } catch (err) {
+      console.error('Failed to upload leads:', err);
+      addToast('Failed to upload leads', 'error');
+    }
+  },
+}));
