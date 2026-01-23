@@ -1,43 +1,195 @@
-name: Deploy Dream-Trade
+name: Deploy to server
 
 on:
   push:
-    branches:
-      - main
+    branches: ["main"]
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install SSH key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.DO_SSH_KEY }}
-          known_hosts: unnecessary
-
-      - name: Add server to known_hosts
-        run: ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Deploy to DigitalOcean
+      - name: Setup SSH
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY_B64: ${{ secrets.SSH_PRIVATE_KEY_B64 }}
         run: |
-          ssh ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} << 'EOF'
-            set -e
+          set -euo pipefail
 
-            echo "Deploying to server..."
+          if [ -z "${SSH_HOST:-}" ]; then
+            echo "Missing required secret: SSH_HOST"
+            exit 1
+          fi
 
-            mkdir -p ${{ secrets.APP_DIR }}
-            cd ${{ secrets.APP_DIR }}
+          if [ -z "${SSH_PRIVATE_KEY_B64:-}" ]; then
+            echo "Missing required secret: SSH_PRIVATE_KEY_B64"
+            exit 1
+          fi
 
-            if [ ! -d ".git" ]; then
-              git clone https://github.com/lamalive23802/Dream-Trade.git .
+          PORT="${SSH_PORT:-22}"
+
+          echo "Creating SSH directory..."
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          echo "Decoding SSH private key..."
+          echo "$SSH_PRIVATE_KEY_B64" | tr -d '[:space:]' | base64 -d > ~/.ssh/id_ed25519 2>&1 || {
+            echo "❌ Failed to decode SSH_PRIVATE_KEY_B64"
+            echo "Please ensure the secret contains a valid base64-encoded private key."
+            echo "To create it, run: cat ~/github_actions_deploy | base64 | tr -d '\n'"
+            exit 1
+          }
+          chmod 600 ~/.ssh/id_ed25519
+          echo "✅ Key decoded successfully"
+
+          echo "Validating key format..."
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null 2>&1 || {
+            echo "❌ SSH key validation failed"
+            echo "The decoded key is not a valid SSH private key"
+            exit 1
+          }
+          echo "✅ Key validated successfully"
+
+          echo "Scanning host key for ${SSH_HOST}:${PORT}..."
+          if ssh-keyscan -p "${PORT}" -T 10 -H "${SSH_HOST}" >> ~/.ssh/known_hosts 2>&1; then
+            echo "✅ Host key added to known_hosts"
+          else
+            echo "⚠️ Could not scan host key (server might be behind firewall)"
+            echo "Will attempt connection anyway with StrictHostKeyChecking=accept-new"
+          fi
+
+      - name: Deploy (git pull + install + build + restart)
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          FRONTEND_DIST_DIR: ${{ secrets.FRONTEND_DIST_DIR }}
+          BACKEND_PORT: ${{ secrets.BACKEND_PORT }}
+          SYSTEMD_SERVICE: ${{ secrets.SYSTEMD_SERVICE }}
+          PM2_PROCESS_NAME: ${{ secrets.PM2_PROCESS_NAME }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          HOST="${SSH_HOST}"
+          PORT="${SSH_PORT:-22}"
+          USER="${SSH_USER:-root}"
+
+          if [ -z "${APP_DIR:-}" ]; then
+            echo "Missing required secret: APP_DIR"
+            exit 1
+          fi
+
+          ssh -i ~/.ssh/id_ed25519 \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=accept-new \
+              -p "${PORT}" "${USER}@${HOST}" \
+            "APP_DIR='${APP_DIR}' FRONTEND_DIST_DIR='${FRONTEND_DIST_DIR:-}' BACKEND_PORT='${BACKEND_PORT:-}' SYSTEMD_SERVICE='${SYSTEMD_SERVICE:-}' PM2_PROCESS_NAME='${PM2_PROCESS_NAME:-}' GITHUB_TOKEN='${GITHUB_TOKEN}' bash -s" <<'EOF'
+          set -euo pipefail
+
+          echo "== Server info =="
+          whoami
+          pwd
+
+          if ! command -v git >/dev/null 2>&1; then
+            apt-get update -y
+            apt-get install -y git
+          fi
+
+          if ! command -v node >/dev/null 2>&1; then
+            apt-get update -y
+            apt-get install -y ca-certificates curl gnupg
+            mkdir -p /etc/apt/keyrings
+            curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+            apt-get update -y
+            apt-get install -y nodejs
+          fi
+
+          if ! command -v rsync >/dev/null 2>&1; then
+            apt-get update -y
+            apt-get install -y rsync
+          fi
+
+          if ! command -v pm2 >/dev/null 2>&1; then
+            npm i -g pm2 || true
+          fi
+
+          echo "Node: $(node -v || true)"
+          echo "NPM:  $(npm -v || true)"
+
+          mkdir -p "${APP_DIR}"
+          cd "${APP_DIR}"
+
+          if [ ! -d ".git" ]; then
+            echo "Initial clone..."
+            git clone https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/Dream-Trade.git .
+          fi
+
+          echo "Updating code..."
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/Dream-Trade.git
+          git fetch --all --prune
+          git reset --hard origin/main
+
+          if [ -d "backend" ]; then
+            echo "Installing backend deps..."
+            cd backend
+
+            if [ -f package-lock.json ]; then
+              npm ci --omit=dev
             else
-              git fetch --all
-              git reset --hard origin/main
+              npm install --omit=dev
             fi
 
-            echo "Deployment finished successfully"
+            echo "Restarting backend..."
+            if command -v pm2 >/dev/null 2>&1; then
+              NAME="${PM2_PROCESS_NAME:-dreamtrade-backend}"
+              pm2 restart "${NAME}" || pm2 start server.js --name "${NAME}"
+              pm2 save || true
+            elif [ -n "${SYSTEMD_SERVICE:-}" ] && command -v systemctl >/dev/null 2>&1; then
+              systemctl restart "${SYSTEMD_SERVICE}"
+            else
+              PORT="${BACKEND_PORT:-5050}"
+              (command -v fuser >/dev/null 2>&1 && fuser -k "${PORT}/tcp") || true
+              nohup npm run start > ~/dreamtrade-backend.log 2>&1 &
+            fi
+
+            cd "${APP_DIR}"
+          fi
+
+          if [ -d "frontend" ]; then
+            echo "Building frontend..."
+            cd frontend
+
+            if [ -f package-lock.json ]; then
+              npm ci
+            else
+              npm install
+            fi
+
+            npm run build
+
+            if [ -n "${FRONTEND_DIST_DIR:-}" ]; then
+              echo "Syncing frontend dist -> ${FRONTEND_DIST_DIR}"
+              mkdir -p "${FRONTEND_DIST_DIR}"
+              rsync -a --delete dist/ "${FRONTEND_DIST_DIR}/"
+            else
+              echo "FRONTEND_DIST_DIR not set; skipping rsync."
+            fi
+
+            cd "${APP_DIR}"
+          fi
+
+          echo "✅ Deploy complete."
           EOF
