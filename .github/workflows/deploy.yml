@@ -133,29 +133,19 @@ jobs:
           cd "${APP_DIR}"
 
           if [ ! -d ".git" ]; then
-            echo "Initial clone..."
+            echo "Cloning repository..."
             git clone https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/StockVista.git .
+          else
+            echo "Updating code..."
+            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/StockVista.git
+            
+            # If fetch/reset fails (e.g., ref locking), re-clone
+            if ! (git fetch origin main && git reset --hard origin/main) 2>/dev/null; then
+              echo "Git update failed, re-cloning..."
+              rm -rf .git
+              git clone https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/StockVista.git .
+            fi
           fi
-
-          echo "Updating code..."
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/StockVista.git
-          
-          # Clean up stale refs to avoid locking issues
-          echo "Cleaning up stale git references..."
-          rm -rf .git/refs/remotes/origin 2>/dev/null || true
-          git gc --prune=now 2>/dev/null || true
-          
-          # Fetch latest changes
-          echo "Fetching latest code..."
-          git fetch origin main --force || {
-            echo "Fetch failed, trying alternative method..."
-            git fetch origin --prune --force || true
-            git fetch origin main --force || true
-          }
-          
-          # Reset to latest main
-          echo "Resetting to origin/main..."
-          git reset --hard origin/main || git reset --hard origin/HEAD
 
           if [ -d "backend" ]; then
             echo "Installing backend deps..."
