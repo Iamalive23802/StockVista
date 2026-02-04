@@ -134,11 +134,11 @@ jobs:
 
           if [ ! -d ".git" ]; then
             echo "Initial clone..."
-            git clone https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/Dream-Trade.git .
+            git clone https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/StockVista.git .
           fi
 
           echo "Updating code..."
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/Dream-Trade.git
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/Iamalive23802/StockVista.git
           git fetch --all --prune
           git reset --hard origin/main
 
@@ -154,7 +154,7 @@ jobs:
 
             echo "Restarting backend..."
             if command -v pm2 >/dev/null 2>&1; then
-              NAME="${PM2_PROCESS_NAME:-dreamtrade-backend}"
+              NAME="${PM2_PROCESS_NAME:-stockvista-backend}"
               pm2 restart "${NAME}" || pm2 start server.js --name "${NAME}"
               pm2 save || true
             elif [ -n "${SYSTEMD_SERVICE:-}" ] && command -v systemctl >/dev/null 2>&1; then
@@ -162,7 +162,7 @@ jobs:
             else
               PORT="${BACKEND_PORT:-5050}"
               (command -v fuser >/dev/null 2>&1 && fuser -k "${PORT}/tcp") || true
-              nohup npm run start > ~/dreamtrade-backend.log 2>&1 &
+              nohup npm run start > ~/stockvista-backend.log 2>&1 &
             fi
 
             cd "${APP_DIR}"
